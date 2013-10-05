@@ -1,0 +1,111 @@
+<canvas id="canvas"></canvas>
+<div id="debug"></div>
+<button id="moveAB">A and B</button>
+<button id="moveBC">B and C</button>
+<button id="moveAC">A and C</button>
+<script>
+
+function warp(r) {
+  return r * (1 + 0.22 * r * r + 0.24 * r * r * r * r);
+}
+
+function render() {
+  var centerX = width / 4;
+  var centerY = height * 3 / 4;
+  var scale = 1 / 100;
+
+  c.fillStyle = '#EEE';
+  c.fillRect(0, 0, width, height);
+
+  c.strokeStyle = '#777';
+  c.beginPath();
+  for (var x = 0; x < width; x += 5) {
+    var tx = (x - centerX) * scale;
+    var ty = warp(tx);
+    var y = centerY - ty / scale;
+    c.lineTo(x, y);
+  }
+  c.stroke();
+
+  c.strokeStyle = '#000';
+  c.beginPath();
+  for (var y = 0; y < height; y += 5) {
+    var ty = (centerY - y) * scale;
+    var tx = ty / (1 +
+      weightA * ty * ty +
+      weightB * ty * ty * ty * ty +
+      weightC * ty * ty * ty * ty * ty * ty);
+    var x = centerX + tx / scale;
+    c.lineTo(x, y);
+  }
+  c.stroke();
+
+  c.strokeStyle = '#000';
+  c.beginPath();
+  c.moveTo(0, centerY);
+  c.lineTo(width, centerY);
+  c.moveTo(centerX, 0);
+  c.lineTo(centerX, height);
+  c.stroke();
+
+  debug.textContent = 'a = ' + weightA + ', b = ' + weightB + ', c = ' + weightC;
+}
+
+function resize() {
+  var dpr = window.devicePixelRatio || 1; // Support for retina displays
+  c.canvas.width = width * dpr;
+  c.canvas.height = height * dpr;
+  c.canvas.style.width = width + 'px';
+  c.canvas.style.height = height + 'px';
+  c.scale(dpr, dpr);
+  render();
+}
+
+moveAB.onclick = function() {
+  moveX = function(value) { weightA += value * 0.001; };
+  moveY = function(value) { weightB += value * 0.001; };
+};
+
+moveBC.onclick = function() {
+  moveX = function(value) { weightB += value * 0.001; };
+  moveY = function(value) { weightC += value * 0.0001; };
+};
+
+moveAC.onclick = function() {
+  moveX = function(value) { weightA += value * 0.001; };
+  moveY = function(value) { weightC += value * 0.0001; };
+};
+
+var weightA = 0.264;
+var weightB = -0.026;
+var weightC = 0.0014;
+var moveX = null;
+var moveY = null;
+moveAB.onclick();
+
+canvas.onmousedown = function(e) {
+  e.preventDefault();
+  var oldX = e.pageX;
+  var oldY = e.pageY;
+
+  document.onmousemove = function(e) {
+    moveX(e.pageX - oldX);
+    moveY(e.pageY - oldY);
+    oldX = e.pageX;
+    oldY = e.pageY;
+    render();
+  };
+
+  document.onmouseup = function() {
+    document.onmousemove = document.onmouseup = null;
+  };
+};
+
+var width = 800;
+var height = 600;
+var c = canvas.getContext('2d');
+window.onresize = resize;
+resize();
+render();
+
+</script>

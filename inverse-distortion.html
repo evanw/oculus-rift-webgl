@@ -83,10 +83,10 @@ void main() {
 
   // Compute the inverse warp
   vec2 theta = (oTexCoord - LensCenter) / Scale;
-  float r = length(theta);
-  vec2 theta1 = normalize(theta) * (useFastApproximation
-    ? pow(atan(r * 1.065), 1.0 + r * 0.11 - r * r * 0.007) // This is a random formula I made up
-    : inverseWarp(r, HmdWarpParam.xyz));
+  float rSq = dot(theta, theta);
+  vec2 theta1 = (useFastApproximation
+    ? theta / (1.0 + (0.264 + (-0.026 + 0.0014 * rSq) * rSq) * rSq) // This is a random formula I made up, see find-formula.html
+    : normalize(theta) * inverseWarp(sqrt(rSq), HmdWarpParam.xyz));
   vec2 tc = LensCenter + theta1 / ScaleIn;
 
   // Try to recover the original image

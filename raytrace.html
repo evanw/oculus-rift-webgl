@@ -84,12 +84,11 @@ void main() {
   vec2 Scale = vec2(w * 0.5 * scaleFactor, h * 0.5 * scaleFactor * stereoAspect);
   vec2 ScaleIn = vec2(2.0 / w, 2.0 / h / stereoAspect);
 
-  // Compute the inverse warp
-  vec2 theta = (oTexCoord - LensCenter) / Scale;
-  float r = length(theta);
-  float oldR = pow(atan(r * 1.065), 1.0 + r * 0.11 - r * r * 0.007); // See inverse-distortion.html
-  vec2 theta1 = normalize(theta) * oldR;
-  vec2 tc = LensCenter + theta1 / ScaleIn;
+  // Compute the warp
+  vec2 theta = (oTexCoord - LensCenter) * ScaleIn;
+  float rSq = dot(theta, theta);
+  vec2 theta1 = theta * dot(HmdWarpParam, vec4(1.0, rSq, rSq * rSq, rSq * rSq * rSq));
+  vec2 tc = LensCenter + theta1 * Scale;
 
   // Trace the warped ray
   vec3 localEye = eye + axisX * HMD_InterpupillaryDistance * 0.5 * (isRight ? 1.0 : -1.0);
@@ -135,7 +134,7 @@ function render() {
   var cosX = Math.cos(angleX);
   var sinY = Math.sin(angleY);
   var cosY = Math.cos(angleY);
-  gl.uniform3f(gl.getUniformLocation(shader, 'eye'), 0, 1, 0);
+  gl.uniform3f(gl.getUniformLocation(shader, 'eye'), 0, 2, 0);
   gl.uniform3f(gl.getUniformLocation(shader, 'axisX'), cosY, 0, -sinY);
   gl.uniform3f(gl.getUniformLocation(shader, 'axisY'), sinY * sinX, cosX, cosY * sinX);
   gl.uniform3f(gl.getUniformLocation(shader, 'axisZ'), sinY * cosX, -sinX, cosY * cosX);
@@ -159,6 +158,7 @@ resize();
 render();
 
 document.onmousedown = function(e) {
+  e.preventDefault();
   var oldX = e.pageX;
   var oldY = e.pageY;
 
