@@ -1,0 +1,159 @@
+<script id="vertexShader" type="bogus">
+precision highp float;
+attribute vec2 vertex;
+varying vec2 oTexCoord;
+
+void main() {
+  oTexCoord = 0.5 + vec2(0.5, -0.5) * vertex;
+  gl_Position = vec4(vertex, 0.0, 1.0);
+}
+</script>
+
+<script id="fragmentShader" type="bogus">
+precision highp float;
+uniform sampler2D texture;
+varying vec2 oTexCoord;
+
+// Values that were scattered throughout the Oculus world demo
+const vec4 HmdWarpParam = vec4(1.0, 0.22, 0.24, 0.0); // For the 7-inch device
+const vec4 ChromAbParam = vec4(0.996, -0.004, 1.014, 0.0);
+const float HMD_HResolution = 1280.0;
+const float HMD_VResolution = 800.0;
+const float HMD_HScreenSize = 0.14976;
+const float HMD_VScreenSize = HMD_HScreenSize / (HMD_HResolution / HMD_VResolution);
+const float HMD_InterpupillaryDistance = 0.064;
+const float HMD_LensSeparationDistance = 0.0635;
+const float HMD_EyeToScreenDistance = 0.041;
+const float lensOffset = HMD_LensSeparationDistance * 0.5;
+const float lensShift = HMD_HScreenSize * 0.25 - lensOffset;
+const float Distortion_XCenterOffset = 4.0 * lensShift / HMD_HScreenSize;
+const float DistortionFitX = -1.0;
+const float DistortionFitY = 0.0;
+const float stereoAspect = 0.5 * HMD_HResolution / HMD_VResolution;
+const float dx = DistortionFitX - Distortion_XCenterOffset;
+const float dy = DistortionFitY / stereoAspect;
+const float fitRadiusSquared = dx * dx + dy * dy;
+const float Distortion_Scale =
+  HmdWarpParam.x +
+  HmdWarpParam.y * fitRadiusSquared +
+  HmdWarpParam.z * fitRadiusSquared * fitRadiusSquared +
+  HmdWarpParam.w * fitRadiusSquared * fitRadiusSquared * fitRadiusSquared;
+
+// This samples from a single unwarped [0,0]x[1,1] box containing two views
+// side-by-side that have been rendered using normal perspective projection.
+// The left eye takes up [0,0]x[0.5,1] and the right eye takes up [0.5,0]x[1,1].
+vec4 sample(vec2 point, vec2 ScreenCenter) {
+  if (clamp(point, ScreenCenter - vec2(0.25, 0.5), ScreenCenter + vec2(0.25, 0.5)) != point) return vec4(0.0);
+  return texture2D(texture, point);
+}
+
+float warp(float r, vec3 K) {
+  return dot(K, vec3(r, r * r * r, r * r * r * r * r));
+}
+
+float derivativeWarp(float r, vec3 K) {
+  return dot(K, vec3(1.0, 3.0 * r * r, 5.0 * r * r * r * r));
+}
+
+// Use Newton's method
+float inverseWarp(float r, vec3 K) {
+  float guess = r;
+  for (int i = 0; i < 6; i++) {
+    guess -= (warp(guess, K) - r) / derivativeWarp(guess, K);
+  }
+  return guess;
+}
+
+void main() {
+  // Compute the viewport size
+  bool isRight = oTexCoord.x > 0.5;
+  float x = isRight ? 0.5 : 0.0;
+  float y = 0.0;
+  float w = 0.5;
+  float h = 1.0;
+
+  // Set up values for the shader
+  float XCenterOffset = isRight ? -Distortion_XCenterOffset : Distortion_XCenterOffset;
+  vec2 LensCenter = vec2(x + (w + XCenterOffset * 0.5) * 0.5, y + h * 0.5);
+  vec2 ScreenCenter = vec2(x + w * 0.5, y + h * 0.5);
+  float scaleFactor = 1.0 / Distortion_Scale;
+  vec2 Scale = vec2(w * 0.5 * scaleFactor, h * 0.5 * scaleFactor * stereoAspect);
+  vec2 ScaleIn = vec2(2.0 / w, 2.0 / h / stereoAspect);
+
+  // Compute the inverse warp
+  vec2 theta = (oTexCoord - LensCenter) / Scale;
+  float r = length(theta);
+  vec2 theta1 = normalize(theta) * inverseWarp(r, HmdWarpParam.xyz);
+  vec2 tc = LensCenter + theta1 / ScaleIn;
+
+  // Apply chromatic aberration
+  gl_FragColor = sample(tc, ScreenCenter);
+}
+</script>
+
+<body style="position:fixed;left:0;top:0;right:0;bottom:0;overflow;hidden;margin:0;">
+<canvas id="canvas"></canvas>
+</body>
+<script>
+
+var gl = canvas.getContext('experimental-webgl', { 'alpha': false });
+var buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+function createShader(vertexSource, fragmentSource) {
+  function compileShader(type, source) {
+    var shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    var info = gl.getShaderInfoLog(shader);
+    if (info) throw new Error(info);
+    gl.attachShader(program, shader);
+  }
+  var program = gl.createProgram();
+  compileShader(gl.VERTEX_SHADER, vertexSource);
+  compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+  gl.linkProgram(program);
+  return program;
+}
+
+function render() {
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(shader);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function resize() {
+  var dpr = window.devicePixelRatio || 1; // Support for retina displays
+  gl.canvas.width = innerWidth * dpr;
+  gl.canvas.height = innerHeight * dpr;
+  gl.canvas.style.width = innerWidth + 'px';
+  gl.canvas.style.height = innerHeight + 'px';
+  render();
+}
+
+function main() {
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+  window.onresize = resize;
+  resize();
+  render();
+}
+
+var texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+var shader = createShader(vertexShader.textContent, fragmentShader.textContent);
+var image = new Image;
+image.onload = main;
+image.src = 'screenshot.png';
+
+</script>
