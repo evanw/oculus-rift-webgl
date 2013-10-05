@@ -1,16 +1,23 @@
 <script id="vertexShader" type="bogus">
 precision highp float;
+
 attribute vec2 vertex;
 varying vec2 oTexCoord;
 
 void main() {
-  oTexCoord = 0.5 + vec2(0.5, -0.5) * vertex;
+  oTexCoord = 0.5 + 0.5 * vertex;
   gl_Position = vec4(vertex, 0.0, 1.0);
 }
 </script>
 
 <script id="fragmentShader" type="bogus">
+#extension GL_OES_standard_derivatives : enable
 precision highp float;
+
+uniform vec3 eye;
+uniform vec3 axisX;
+uniform vec3 axisY;
+uniform vec3 axisZ;
 varying vec2 oTexCoord;
 
 // Values that were scattered throughout the Oculus world demo
@@ -41,10 +48,24 @@ const float Distortion_Scale =
 // This samples from a single unwarped [0,0]x[1,1] box containing two views
 // side-by-side that have been rendered using normal perspective projection.
 // The left eye takes up [0,0]x[0.5,1] and the right eye takes up [0.5,0]x[1,1].
-vec4 sample(vec2 point, vec2 ScreenCenter) {
-  if (clamp(point, ScreenCenter - vec2(0.25, 0.5), ScreenCenter + vec2(0.25, 0.5)) != point) return vec4(0.0);
-  vec2 checkerboard = fract(point * vec2(4.0, 2.0)) - 0.5;
-  return vec4(checkerboard.x * checkerboard.y < 0.0 ? 0.25 : 1.0);
+vec4 sample(vec2 point, vec3 eye, vec2 LensCenter) {
+  // Compute the ray
+  float dx = (point.x - LensCenter.x) * 2.0;
+  float dy = point.y - LensCenter.y;
+  vec3 ray = axisX * dx + axisY * dy + axisZ;
+
+  // Trace the ray
+  float t = -eye.y / ray.y;
+  if (t < 0.0) return vec4(0.0);
+  vec2 onPlane = eye.xz + ray.xz * t;
+
+  // Magical anti-aliased checkerboard
+  vec2 checkerboard = fract(onPlane * 0.5 + 0.25) - 0.5;
+  vec2 size = fwidth(onPlane);
+  vec2 lines = abs(fract(onPlane) - 0.5) / (size + size * size * size);
+  float antialiasing = min(lines.x, lines.y);
+  float color = max(0.0, checkerboard.x * checkerboard.y < 0.0 ? 0.5 + antialiasing : 0.5 - antialiasing);
+  return vec4(color);
 }
 
 void main() {
@@ -63,31 +84,17 @@ void main() {
   vec2 Scale = vec2(w * 0.5 * scaleFactor, h * 0.5 * scaleFactor * stereoAspect);
   vec2 ScaleIn = vec2(2.0 / w, 2.0 / h / stereoAspect);
 
-  // Compute the warp
-  vec2 theta = (oTexCoord - LensCenter) * ScaleIn; // Scales to [-1, 1]
-  float rSq = theta.x * theta.x + theta.y * theta.y;
-  vec2 theta1 = theta * (
-    HmdWarpParam.x +
-    HmdWarpParam.y * rSq +
-    HmdWarpParam.z * rSq * rSq +
-    HmdWarpParam.w * rSq * rSq * rSq);
+  // Compute the inverse warp
+  vec2 theta = (oTexCoord - LensCenter) / Scale;
+  float r = length(theta);
+  float oldR = pow(atan(r * 1.065), 1.0 + r * 0.11 - r * r * 0.007); // See inverse-distortion.html
+  vec2 theta1 = normalize(theta) * oldR;
+  vec2 tc = LensCenter + theta1 / ScaleIn;
 
-  // Compute chromatic aberration
-  vec2 thetaRed = theta1 * (ChromAbParam.x + ChromAbParam.y * rSq);
-  vec2 thetaBlue = theta1 * (ChromAbParam.z + ChromAbParam.w * rSq);
-  vec2 tcRed = LensCenter + Scale * thetaRed;
-  vec2 tcGreen = LensCenter + Scale * theta1;
-  vec2 tcBlue = LensCenter + Scale * thetaBlue;
+  // Trace the warped ray
+  vec3 localEye = eye + axisX * HMD_InterpupillaryDistance * 0.5 * (isRight ? 1.0 : -1.0);
+  gl_FragColor = sample(tc, localEye, LensCenter);
 
-  // Apply chromatic aberration
-  gl_FragColor = vec4(
-    sample(tcRed, ScreenCenter).r,
-    sample(tcGreen, ScreenCenter).g,
-    sample(tcBlue, ScreenCenter).b,
-    1.0);
-
-  // Visualize the unwarped data
-  // gl_FragColor = sample(oTexCoord, ScreenCenter);
 }
 </script>
 
@@ -100,6 +107,7 @@ var gl = canvas.getContext('experimental-webgl', { 'alpha': false });
 var buffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+gl.getExtension('OES_standard_derivatives');
 
 function createShader(vertexSource, fragmentSource) {
   function compileShader(type, source) {
@@ -118,9 +126,19 @@ function createShader(vertexSource, fragmentSource) {
 }
 
 function render() {
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
   gl.useProgram(shader);
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  var sinX = Math.sin(angleX);
+  var cosX = Math.cos(angleX);
+  var sinY = Math.sin(angleY);
+  var cosY = Math.cos(angleY);
+  gl.uniform3f(gl.getUniformLocation(shader, 'eye'), 0, 1, 0);
+  gl.uniform3f(gl.getUniformLocation(shader, 'axisX'), cosY, 0, -sinY);
+  gl.uniform3f(gl.getUniformLocation(shader, 'axisY'), sinY * sinX, cosX, cosY * sinX);
+  gl.uniform3f(gl.getUniformLocation(shader, 'axisZ'), sinY * cosX, -sinX, cosY * cosX);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -130,13 +148,32 @@ function resize() {
   gl.canvas.height = innerHeight * dpr;
   gl.canvas.style.width = innerWidth + 'px';
   gl.canvas.style.height = innerHeight + 'px';
-  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
   render();
 }
 
+var angleX = 0;
+var angleY = 0;
 var shader = createShader(vertexShader.textContent, fragmentShader.textContent);
 window.onresize = resize;
 resize();
 render();
+
+document.onmousedown = function(e) {
+  var oldX = e.pageX;
+  var oldY = e.pageY;
+
+  document.onmousemove = function(e) {
+    angleX += (e.pageY - oldY) * 0.001;
+    angleY += (e.pageX - oldX) * 0.001;
+    angleX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, angleX));
+    oldX = e.pageX;
+    oldY = e.pageY;
+    render();
+  };
+
+  document.onmouseup = function(e) {
+    document.onmousemove = document.onmouseup = null;
+  };
+};
 
 </script>
