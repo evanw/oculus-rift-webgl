@@ -93,7 +93,6 @@ void main() {
   // Trace the warped ray
   vec3 localEye = eye + axisX * HMD_InterpupillaryDistance * 0.5 * (isRight ? 1.0 : -1.0);
   gl_FragColor = sample(tc, localEye, LensCenter);
-
 }
 </script>
 
@@ -150,13 +149,6 @@ function resize() {
   render();
 }
 
-var angleX = 0;
-var angleY = 0;
-var shader = createShader(vertexShader.textContent, fragmentShader.textContent);
-window.onresize = resize;
-resize();
-render();
-
 document.onmousedown = function(e) {
   e.preventDefault();
   var oldX = e.pageX;
@@ -175,5 +167,11 @@ document.onmousedown = function(e) {
     document.onmousemove = document.onmouseup = null;
   };
 };
+
+var angleX = 0;
+var angleY = 0;
+var shader = createShader(vertexShader.textContent, fragmentShader.textContent);
+window.onresize = resize;
+resize();
 
 </script>

@@ -1,0 +1,1472 @@
+<script id="vertexShader" type="bogus">
+precision highp float;
+
+attribute vec2 vertex;
+varying vec2 oTexCoord;
+
+void main() {
+  oTexCoord = 0.5 + 0.5 * vertex;
+  gl_Position = vec4(vertex, 0.0, 1.0);
+}
+</script>
+
+<script id="fragmentShader" type="bogus">
+precision highp float;
+
+uniform vec3 eye;
+uniform vec3 axisX;
+uniform vec3 axisY;
+uniform vec3 axisZ;
+varying vec2 oTexCoord;
+
+// Values that were scattered throughout the Oculus world demo
+const vec4 HmdWarpParam = vec4(1.0, 0.22, 0.24, 0.0); // For the 7-inch device
+const vec4 ChromAbParam = vec4(0.996, -0.004, 1.014, 0.0);
+const float HMD_HResolution = 1280.0;
+const float HMD_VResolution = 800.0;
+const float HMD_HScreenSize = 0.14976;
+const float HMD_VScreenSize = HMD_HScreenSize / (HMD_HResolution / HMD_VResolution);
+const float HMD_InterpupillaryDistance = 0.064;
+const float HMD_LensSeparationDistance = 0.0635;
+const float HMD_EyeToScreenDistance = 0.041;
+const float lensOffset = HMD_LensSeparationDistance * 0.5;
+const float lensShift = HMD_HScreenSize * 0.25 - lensOffset;
+const float Distortion_XCenterOffset = 4.0 * lensShift / HMD_HScreenSize;
+const float DistortionFitX = -1.0;
+const float DistortionFitY = 0.0;
+const float stereoAspect = 0.5 * HMD_HResolution / HMD_VResolution;
+const float dx = DistortionFitX - Distortion_XCenterOffset;
+const float dy = DistortionFitY / stereoAspect;
+const float fitRadiusSquared = dx * dx + dy * dy;
+const float Distortion_Scale =
+  HmdWarpParam.x +
+  HmdWarpParam.y * fitRadiusSquared +
+  HmdWarpParam.z * fitRadiusSquared * fitRadiusSquared +
+  HmdWarpParam.w * fitRadiusSquared * fitRadiusSquared * fitRadiusSquared;
+
+// This will be linked in later
+vec4 child_main(vec3 eye, vec3 ray);
+
+// This samples from a single unwarped [0,0]x[1,1] box containing two views
+// side-by-side that have been rendered using normal perspective projection.
+// The left eye takes up [0,0]x[0.5,1] and the right eye takes up [0.5,0]x[1,1].
+vec4 sample(vec2 point, vec3 eye, vec2 LensCenter) {
+  float dx = (point.x - LensCenter.x) * 2.0;
+  float dy = point.y - LensCenter.y;
+  vec3 ray = axisX * dx + axisY * dy + axisZ;
+  return child_main(eye, ray);
+}
+
+void main() {
+  // Compute the viewport size
+  bool isRight = oTexCoord.x > 0.5;
+  float x = isRight ? 0.5 : 0.0;
+  float y = 0.0;
+  float w = 0.5;
+  float h = 1.0;
+
+  // Set up values for the shader
+  float XCenterOffset = isRight ? -Distortion_XCenterOffset : Distortion_XCenterOffset;
+  vec2 LensCenter = vec2(x + (w + XCenterOffset * 0.5) * 0.5, y + h * 0.5);
+  vec2 ScreenCenter = vec2(x + w * 0.5, y + h * 0.5);
+  float scaleFactor = 1.0 / Distortion_Scale;
+  vec2 Scale = vec2(w * 0.5 * scaleFactor, h * 0.5 * scaleFactor * stereoAspect);
+  vec2 ScaleIn = vec2(2.0 / w, 2.0 / h / stereoAspect);
+
+  // Compute the warp
+  vec2 theta = (oTexCoord - LensCenter) * ScaleIn;
+  float rSq = dot(theta, theta);
+  vec2 theta1 = theta * dot(HmdWarpParam, vec4(1.0, rSq, rSq * rSq, rSq * rSq * rSq));
+  vec2 tc = LensCenter + theta1 * Scale;
+
+  // Trace the warped ray
+  vec3 localEye = eye + axisX * HMD_InterpupillaryDistance * 0.5 * (isRight ? 1.0 : -1.0);
+  gl_FragColor = sample(tc, localEye, LensCenter);
+}
+</script>
+
+<script id="truchetTentacles" type="bogus">
+// From: https://www.shadertoy.com/view/ldfGWn
+float rand(vec3 r) { return fract(sin(dot(r.xy,vec2(1.38984*sin(r.z),1.13233*cos(r.z))))*653758.5453); }
+
+#define Iterations 64
+#define Thickness 0.1
+#define SuperQuadPower 8.0
+#define Fisheye 0.5
+
+float truchetarc(vec3 pos)
+{
+  float r=length(pos.xy);
+//  return max(abs(r-0.5),abs(pos.z-0.5))-Thickness;
+//  return length(vec2(r-0.5,pos.z-0.5))-Thickness;
+  return pow(pow(abs(r-0.5),SuperQuadPower)+pow(abs(pos.z-0.5),SuperQuadPower),1.0/SuperQuadPower)-Thickness;
+}
+
+float truchetcell(vec3 pos)
+{
+  return min(min(
+  truchetarc(pos),
+  truchetarc(vec3(pos.z,1.0-pos.x,pos.y))),
+  truchetarc(vec3(1.0-pos.y,1.0-pos.z,pos.x)));
+}
+
+float distfunc(vec3 pos)
+{
+  vec3 cellpos=fract(pos);
+  vec3 gridpos=floor(pos);
+
+  float rnd=rand(gridpos);
+
+  if(rnd<1.0/8.0) return truchetcell(vec3(cellpos.x,cellpos.y,cellpos.z));
+  else if(rnd<2.0/8.0) return truchetcell(vec3(cellpos.x,1.0-cellpos.y,cellpos.z));
+  else if(rnd<3.0/8.0) return truchetcell(vec3(1.0-cellpos.x,cellpos.y,cellpos.z));
+  else if(rnd<4.0/8.0) return truchetcell(vec3(1.0-cellpos.x,1.0-cellpos.y,cellpos.z));
+  else if(rnd<5.0/8.0) return truchetcell(vec3(cellpos.y,cellpos.x,cellpos.z));
+  else if(rnd<6.0/8.0) return truchetcell(vec3(cellpos.y,1.0-cellpos.x,cellpos.z));
+  else if(rnd<7.0/8.0) return truchetcell(vec3(1.0-cellpos.y,cellpos.x,cellpos.z));
+  else  return truchetcell(vec3(1.0-cellpos.y,1.0-cellpos.x,cellpos.z));
+}
+
+vec3 gradient(vec3 pos)
+{
+  const float eps=0.0001;
+  float mid=distfunc(pos);
+  return vec3(
+  distfunc(pos+vec3(eps,0.0,0.0))-mid,
+  distfunc(pos+vec3(0.0,eps,0.0))-mid,
+  distfunc(pos+vec3(0.0,0.0,eps))-mid);
+}
+
+vec4 child_main(vec3 ray_pos, vec3 ray_dir)
+{
+  const float pi=3.141592;
+
+  float i=float(Iterations);
+  for(int j=0;j<Iterations;j++)
+  {
+    float dist=distfunc(ray_pos);
+    ray_pos+=dist*ray_dir;
+
+    if(abs(dist)<0.001) { i=float(j); break; }
+  }
+
+  vec3 normal=normalize(gradient(ray_pos));
+
+  float ao=1.0-i/float(Iterations);
+  float what=pow(max(0.0,dot(normal,-ray_dir)),2.0);
+  float light=ao*what*1.4;
+
+  float z=ray_pos.z/2.0;
+//  vec3 col=(sin(vec3(z,z+pi/3.0,z+pi*2.0/3.0))+2.0)/3.0;
+  vec3 col=(cos(ray_pos/2.0)+2.0)/3.0;
+
+  return vec4(col*light,1.0);
+}
+</script>
+
+<script id="mandelbulb" type="bogus">
+// From: https://www.shadertoy.com/view/MdfGRr
+// Created by inigo quilez - iq/2013
+// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+
+bool isphere( in vec4 sph, in vec3 ro, in vec3 rd, out vec2 t )
+{
+    vec3 oc = ro - sph.xyz;
+  float b = dot(oc,rd);
+  float c = dot(oc,oc) - sph.w*sph.w;
+
+    float h = b*b - c;
+    if( h<0.0 )
+        return false;
+
+    float g = sqrt( h );
+    t.x = - b - g;
+    t.y = - b + g;
+
+    return true;
+}
+
+const int NumIte = 7;
+const float Bailout = 1000.0;
+
+bool iterate( in vec3 p, in vec3 CC, out float resPot, out vec4 resColor )
+{
+    vec3 zz = p;
+  vec4 trap = vec4(abs(zz.xyz),dot(zz,zz));
+  float dz = 1.0;
+
+  for( int i=0; i<NumIte; i++ )
+    {
+        float m = dot(zz,zz);
+    if( m > Bailout )
+        {
+        resColor = trap;
+      resPot = 0.25*log(m)*sqrt(m)/dz;
+            return false;
+        }
+
+    dz = 8.0*pow(m,3.5)*dz;
+
+        float x = zz.x; float x2 = x*x; float x4 = x2*x2;
+        float y = zz.y; float y2 = y*y; float y4 = y2*y2;
+        float z = zz.z; float z2 = z*z; float z4 = z2*z2;
+
+        float k3 = x2 + z2;
+        float k2 = inversesqrt( k3*k3*k3*k3*k3*k3*k3 );
+        float k1 = x4 + y4 + z4 - 6.0*y2*z2 - 6.0*x2*y2 + 2.0*z2*x2;
+        float k4 = x2 - y2 + z2;
+
+        zz.x = CC.x +  64.0*x*y*z*(x2-z2)*k4*(x4-6.0*x2*z2+z4)*k1*k2;
+        zz.y = CC.y + -16.0*y2*k3*k4*k4 + k1*k1;
+        zz.z = CC.z +  -8.0*y*k4*(x4*x4 - 28.0*x4*x2*z2 + 70.0*x4*z4 - 28.0*x2*z2*z4 + z4*z4)*k1*k2;
+
+        trap = min( trap, vec4(abs(zz.xyz),dot(zz,zz)) );
+
+    }
+
+    resColor = trap;
+    resPot = 0.0;
+    return true;
+}
+
+bool ifractal( in vec3 ro, in vec3 rd, out float rest, in float maxt, out vec3 resnor, out vec4 rescol, float fov, vec3 ccc )
+{
+    vec4 sph = vec4( 0.0, 0.0, 0.0, 1.25 );
+    vec2 dis;
+
+    if( !isphere(sph,ro,rd,dis) )
+        return false;
+
+    // early skip
+    if( dis.y<0.001 ) return false;
+    // clip to near!
+    if( dis.x<0.001 )dis.x = 0.001;
+
+    if( dis.y>maxt) dis.y = maxt;
+
+    float dt;
+  vec3 gra;
+  vec4 color;
+
+  float fovfactor = 1.0/sqrt(1.0+fov*fov);
+
+  float t = dis.x;
+  for( int i=0; i<80; i++  )
+    {
+        vec3 p = ro + rd*t;
+
+float Surface = clamp( 0.002*t*fovfactor, 0.000001, 0.005 );
+
+
+    float eps = Surface*0.1;
+    vec4 col2;
+    if( iterate(p,ccc,dt,color) ) { rest = t; resnor=vec3(0.0,0.0,0.0); rescol = color; return true; }
+
+    //gra = vec3( pot2-pot1, pot3-pot1, pot4-pot1 );
+//dt = 0.01;
+    if( dt<Surface )
+        {
+        rescol = color;
+
+      vec4 tmp;
+      float eps = Surface*0.75;
+      float p2; iterate( p+vec3(eps,0.0,0.0), ccc, p2, tmp );
+      float p3; iterate( p+vec3(0.0,eps,0.0), ccc, p3, tmp );
+      float p4; iterate( p+vec3(0.0,0.0,eps), ccc, p4, tmp );
+      resnor = normalize( vec3( p2-dt, p3-dt, p4-dt ) );
+            rest = t;
+            return true;
+        }
+
+        t+=dt;
+    }
+
+    return false;
+}
+
+
+vec4 child_main(vec3 campos, vec3 rd)
+{
+    float time = 3.5;
+
+  vec3 light1 = vec3(  0.577, 0.577, -0.577 );
+  vec3 light2 = vec3( -0.707, 0.000,  0.707 );
+
+  float fov = 1.5;
+
+  vec3 cc = vec3( 0.9*cos(3.9+1.2*time)-.3, 0.8*cos(2.5+1.1*time), 0.8*cos(3.4+1.3*time) );
+  if( length(cc)<0.50 ) cc=0.50*normalize(cc);
+  if( length(cc)>0.95 ) cc=0.95*normalize(cc);
+
+  vec3 nor, rgb;
+  vec4 col;
+    float t;
+    if( !ifractal(campos,rd,t,1e20,nor,col,fov,cc) )
+    {
+      rgb = 1.3*vec3(1.0,.98,0.9)*(0.7+0.3*rd.y);
+
+    rgb += vec3(0.8,0.7,0.5)*pow( clamp(dot(rd,light1),0.0,1.0), 32.0 );
+  }
+  else
+  {
+    vec3 xyz = campos + t*rd;
+
+    float dif1 = clamp( dot( light1, nor ), 0.0, 1.0 );
+    float dif2 = clamp( 0.5 + 0.5*dot( light2, nor ), 0.0, 1.0 );
+    float ao = clamp(1.5*col.w-0.9,0.0,1.0);
+    float lt1;
+    vec3 ln;
+    vec4 lc;
+    if( dif1>0.001 ) if( ifractal(xyz,light1,lt1,1e20,ln,lc,fov,cc) ) dif1 = 0.0;
+
+    rgb = vec3(1.0,1.0,1.0)*0.3;
+
+    rgb = mix( rgb, vec3(1.0,0.1,0.0), sqrt(col.x) );
+    rgb = mix( rgb, vec3(1.0,0.5,0.2), sqrt(col.y) );
+    rgb = mix( rgb, vec3(1.0,1.0,1.0), col.z );
+
+    vec3 brdf  = 1.5*vec3(0.17,0.19,0.20)*(0.6+0.4*nor.y)*(0.1+0.9*ao);
+         brdf += 1.9*vec3(1.00,0.90,0.60)*dif1*(0.5+0.5*ao);
+         brdf += 1.1*vec3(0.14,0.14,0.14)*dif2*ao;
+
+    rgb *= brdf;
+
+  }
+
+  rgb = sqrt(rgb);
+
+  return vec4(rgb,1.0);
+}
+</script>
+
+<script id="legoCastle" type="bogus">
+// From: https://www.shadertoy.com/view/4sXGDj
+//these options seem to be too much for Windows: turn on for moar fun.
+//#define MOAR_CSG
+//#define BUILD_UP_AND_DOWN
+
+//Please turn on!! looks soo much better!
+//#define REFLECTIONS
+
+//turn these off to be cheaper...
+#define SHADOWS
+#define COLORS
+#define AO
+
+//OMG!! text due to mmalex!!
+#define LOGO
+
+//select one of these
+//#define NICE_NORMALS
+#define MEDIUM_NORMALS
+//#define NASTY_NORMALS
+
+#define pi 3.1415927
+
+
+float Box( vec3 p, vec3 b )
+{
+  vec3 d = abs(p) - b;
+  return min(max(d.x,max(d.y,d.z)),0.0) + length(max(d,0.0));
+}
+
+vec2 BoxY( vec3 p, vec3 b ) //euclidean & directed y distance only
+{
+  vec3 d = abs(p) - b;
+  float mxz = max(d.x,d.z);
+  float c = min(max(d.y,mxz),0.) + length(max(d,0.0));
+
+  return vec2(c, mxz < 0. ? d.y : 1e10 );
+}
+
+vec4 Box4( vec4 p_x, vec4 p_y, vec4 p_z, vec4 b_x, vec4 b_y, vec4 b_z )
+{
+  vec4 d_x = abs(p_x) - b_x;
+  vec4 d_y = abs(p_y) - b_y;
+  vec4 d_z = abs(p_z) - b_z;
+
+  vec4 mdx = max(d_x,0.);
+  vec4 mdy = max(d_y,0.);
+  vec4 mdz = max(d_z,0.);
+
+  vec4 len = sqrt( mdx*mdx+mdy*mdy+mdz*mdz );
+
+  return min(max(d_x,max(d_y,d_z)),vec4(0)) + len;
+}
+
+vec4 Box4Y( vec4 p_x, vec4 p_y, vec4 p_z, vec4 b_x, vec4 b_y, vec4 b_z, out vec4 Y )
+{
+  vec4 d_x = abs(p_x) - b_x;
+  vec4 d_y = abs(p_y) - b_y;
+  vec4 d_z = abs(p_z) - b_z;
+
+  vec4 mdx = max(d_x,0.);
+  vec4 mdy = max(d_y,0.);
+  vec4 mdz = max(d_z,0.);
+
+  vec4 len = sqrt( mdx*mdx+mdy*mdy+mdz*mdz );
+
+  vec4 max_dxz = max(d_x,d_z);
+
+#if 0
+  Y = mix(vec4(1e10), d_y, vec4(lessThan(max_dxz, vec4(0.))) ); //select y dist if inside ow. far out
+#else
+  Y.x = max_dxz.x < 0. ? d_y.x : 1e10;
+  Y.y = max_dxz.y < 0. ? d_y.y : 1e10;
+  Y.z = max_dxz.z < 0. ? d_y.z : 1e10;
+  Y.w = max_dxz.w < 0. ? d_y.w : 1e10;
+#endif
+
+  return min( max(d_y,max_dxz), vec4(0)) + len;
+}
+
+float CylinderXZ( vec3 p, vec3 c ) {
+  return length(p.xz-c.xy)-c.z;
+}
+
+vec3 RotX(vec3 p, float t) {
+  float c = cos(t); float s = sin(t);
+  return vec3(p.x,
+        p.y*c+p.z*s,
+        -p.y*s+p.z*c);
+}
+
+vec3 RotY(vec3 p, float t) {
+  float c = cos(t); float s = sin(t);
+  return vec3(p.x*c+p.z*s,
+        p.y,
+        -p.x*s+p.z*c);
+}
+
+vec3 RotZ(vec3 p, float t) {
+  float c = cos(t); float s = sin(t);
+  return vec3(p.x*c+p.y*s,
+        -p.x*s+p.y*c,
+        p.z);
+}
+
+float Rep(float x, float t) { return mod(x,t)-0.5*t; }
+vec2 Rep(vec2 x, vec2 t) { return mod(x,t)-0.5*t; }
+vec3 Rep(vec3 x, vec3 t) { return mod(x,t)-0.5*t; }
+float U(float a,float b) { return min(a,b); }
+float U4(vec4 da) {
+  da.xy = min(da.xy,da.zw);
+  return U(da.x,da.y);
+}
+float U8(vec4 da, vec4 db) {
+  da = min(da,db);
+  return U4(da);
+}
+
+float I(float a,float b) { return max(a,b); }
+vec2 IY(vec2 a, vec2 b) { return max(a,b); }
+
+float S(float a,float b) { return max(a,-b); }
+
+vec2 UY(vec2 a,vec2 b) { return min(a,b); }
+vec2 U4Y(vec4 da, vec4 daY) {
+  da.xy = min(da.xy,da.zw);
+  daY.xy = min(daY.xy,daY.zw);
+  return UY(vec2(da.x,da.y),vec2(daY.x,daY.y));
+}
+
+vec2 SY(vec2 a,vec2 b) { return max(a,-b); }
+
+float ClipX(float d, vec3 p, float x) { return I(d,p.x-x); }
+float ClipXX(float d, vec3 p, float x) { return I(d,abs(p.x)-x); }
+
+float ClipY(float d, vec3 p, float x) { return I(d,p.y-x); }
+
+vec2 ClipY(vec2 d, vec3 p, float x) { return vec2( I(d.x,p.y-x), I(d.y,p.y-x)) ; }
+
+float ClipNY(float d, vec3 p, float x) { return I(d,-p.y-x); }
+
+float ClipYY(float d, vec3 p, float x) { return I(d,abs(p.y)-x); }
+
+float ClipZ(float d, vec3 p, float x) { return I(d,p.z-x); }
+float ClipZZ(float d, vec3 p, float x) { return I(d,abs(p.z)-x); }
+
+float floor_height = -1.0;
+float floor_mat_bodge = 0.05;
+
+vec3 ss_grad(vec3 X)
+{
+  return cross(dFdx(X),dFdy(X));
+}
+
+//http://dept-info.labri.fr/~schlick/DOC/gem2.ps.gz
+float bias(float x, float b) {
+  return  x/((1./b-2.)*(1.-x)+1.);
+}
+
+float gain(float x, float g) {
+  float t = (1./g-2.)*(1.-(2.*x));
+  return x<0.5 ? (x/(t+1.)) : (t-x)/(t-1.);
+}
+
+vec2 gain(vec2 x, float g) {
+  vec2 t = (1./g-2.)*(1.-(2.*x));
+  return vec2(  x.x < 0.5 ? (x.x/(t.x+1.)) : (t.x-x.x)/(t.x-1.),
+          x.y < 0.5 ? (x.y/(t.y+1.)) : (t.y-x.y)/(t.y-1.) );
+}
+
+//http://www.robertcailliau.eu/Lego/Dimensions/zMeasurements-en.xhtml
+/*
+There are five basic dimensions:
+The horizontal pitch, or distance between knobs:  8mm.
+The vertical pitch, or height of a classic brick:  9.6mm.
+The horizontal tolerance:  0.1mm
+This is half the gap between bricks in the horizontal plane.  The horizontal tolerance prevents friction between bricks during building.
+The knob diameter:  4.8mm
+This is also the diameter of axles and holes.  Actually a knob must be slightly larger and an axle slightly smaller (4.85 and 4.75 respectively, otherwise axles would not turn in bearing holes and knobs would not stick in them) but we will ignore this difference here.
+The height of a knob:  1.8mm
+*/
+#define brick_h 9.6
+#define brick_w (8./brick_h)
+#define knob_h  (1.8/brick_h)
+#define knob_r  (2.4/brick_h)
+
+//brick being +/-1 high is useful for floor fn.
+
+vec2 BrickSDFY(vec3 p)
+{
+#if 0
+  //bricks
+  vec3 r = p;
+  r.x = Rep(r.x-brick_w,6.0*brick_w);
+  vec2 d = BoxY(r,vec3(brick_w,1.,brick_w*3.));
+
+  d = UY(d,BoxY(p,vec3(brick_w,5.,brick_w*3.)));
+  d = SY(d,BoxY(p-vec3(0.,2.,0.),vec3(brick_w*2.,1.,brick_w*1.)));
+#endif
+
+#if 1
+  float h = 13.;
+
+  p.x += brick_w;
+  p.x = abs(p.x);
+
+        //bastion   column  main  tower
+  vec4 px = p.x - vec4(15.0,  8.,   20.,  22.)*brick_w;
+  vec4 py = vec4(p.y);// + vec4(0.,   0.,   0.,   0.);
+  vec4 pz = p.z + vec4(0.0,   1.,   28.,  21.)*brick_w;
+  vec4 bx =     vec4(5.,  2.,   8.,   6.)*brick_w;
+  vec4 by =     vec4(h,   19.,  h,    25.);
+  vec4 bz =     vec4(5.,  2.,   27.,  6.)*brick_w;
+
+  vec4 daY;
+  vec4 da = Box4Y(px,py,pz,bx,by,bz,daY);
+
+    px = p.x - vec4(15.0,   20.,  17.,  22.)*brick_w;
+  //  py = vec3(p.y);// + vec4(0.,  0.,   0.,   0.);
+    pz = p.z + vec4(1.0,  21.,  26.,  21.)*brick_w;
+    bx =    vec4(3.,  6.,   9.,   4.)*brick_w;
+    by =    vec4(h+2.,  13.,  h+2., 11.);
+    bz =    vec4(4.,  2.,   23.,  7.)*brick_w;
+
+  vec4 dbY;
+  vec4 db = Box4Y(px,py,pz,bx,by,bz,dbY);
+
+  vec2 d = U4Y(da, daY);
+
+  d = SY(d,vec2(db.x,dbY.x));
+  d = SY(d,vec2(db.z,dbY.z));
+  d = SY(d,vec2(db.w,dbY.w));
+
+
+  //bast+main - bast-main + tower - tower ?
+  d = SY( UY(vec2(da.x,daY.x),vec2(da.z,daY.z)), UY(vec2(db.x,dbY.x),vec2(db.z,dbY.z)) );
+  d = UY(d, vec2(da.y,daY.y) );
+
+  vec3 q;
+  q.x = Rep(p.x+0.*brick_w,10.*brick_w);
+  q.y = Rep(p.y-1.,8.);
+  q.z = Rep(p.z-1.*brick_w,6.*brick_w);
+
+    //front windows&crenels   side crenels
+  px = vec4(q.x,p.xxx) -    vec4(0.0,   23.,  22.,  22.)*brick_w;
+  py = vec4(q.yy,p.yy) -    vec4(0.,  0.,   18.,  18.);
+  pz = vec4(p.z,q.z,p.zz) +   vec4(1.0,   2.,   21.,  21.)*brick_w;
+  bx =            vec4(1.,  7.,   7.,   4.)*brick_w;
+  by =            vec4(2.,  2.,   3.,   5.);
+  bz =            vec4(8.,  1.,   2.,   7.)*brick_w;
+
+  vec4 holesY;
+  vec4 holes = Box4Y( px, py, pz, bx, by, bz, holesY );
+
+  d = SY(d,vec2(holes.x,holesY.x));
+
+  d = SY(d,vec2(holes.y,holesY.y));
+
+  //add towers now to not cut holes in them!
+  d = UY(d, SY(vec2(da.w,daY.w),vec2(db.w,dbY.w)));
+
+  d = SY( d, vec2(db.y,dbY.y) );
+#ifdef MOAR_CSG
+  d = SY( d, vec2(holes.w,holesY.w) );
+  d = SY( d, vec2(holes.z,holesY.z) );
+#endif
+#endif
+
+  return d;
+}
+
+vec2 RedBrickSDFY(vec3 p)
+{
+  vec2 d = BoxY(p+vec3(1.*brick_w,-1./3.,-11.*brick_w),vec3(6.*brick_w,2./3.,14.*brick_w));
+  p.x = abs(p.x+1.*brick_w);
+  d = UY(d, BoxY(p-vec3(5.*brick_w,1.,0.),vec3(brick_w*1.,2.,brick_w*3.) ));
+  return d;
+}
+
+float AddStuds(vec2 D, vec3 p)
+{
+  float d = D.x;
+
+  //studs
+  vec3 q = p;
+  q.xz = Rep(q.xz-brick_w,vec2(2.*brick_w));
+  float c = CylinderXZ(q,vec3(0.,0.,knob_r*2.));
+
+  if (D.y > -0.0) //outside in Y dir
+  {
+    c = ClipY(c,p,floor((p.y-D.y))+knob_h*2.); //clip knob off at knob height above surface height
+    d = U(d,c);
+  }
+
+  return d;
+}
+
+float sdf(vec3 p)
+{
+  //floor!
+  float f = p.y-floor_height;
+  vec2 D = vec2(f);
+
+  //bricks
+  //vec2 D = BrickSDFY(p) );
+  D = UY(D,BrickSDFY(p) );
+  D = UY(D,RedBrickSDFY(p));
+#ifdef BUILD_UP_AND_DOWN
+  //build up and down
+  float t = mod(iGlobalTime,20.);
+  t = t > 10. ? 20.-t : t;
+  t *= 2.;
+  t = floor(t);
+  float bh = 1.+2.*floor(t);
+  D.x = ClipY(D.x,p,bh-0.08);
+  D.y = ClipY(D.y,p,bh);
+#endif
+  return AddStuds(D,p);
+}
+
+float bb( vec2 p, vec2 b )
+{
+  return length(max(abs(p)-b,0.0));
+}
+
+//lego logo by mmalex!!
+//https://www.shadertoy.com/view/MsX3W2
+float lego(vec2 uv) { // x is -2 to 2
+  uv.x+=uv.y*-0.1; // italic
+  float oldx=uv.x;
+  uv.x=fract(uv.x)-0.5; // letter repeat
+  if (abs(oldx)>2.0) return 0.0; // clip!
+  float l;
+  if( oldx<0.0) {
+    // l and e
+    float e0=bb(uv-vec2(-0.15,0.0),vec2(0.2,0.0)); // cross of e
+    if (oldx>-1.0) uv.y=-abs(uv.y); else e0=1.0;
+    float l0=bb((uv)-vec2(0.0,-0.75),vec2(0.35,0.0)); // bottom of l
+    float l1=bb((uv)-vec2(-0.35,0.0),vec2(0.0,0.75)); // left of l
+    l0=min(l0,e0);
+    l=min(l0,l1);
+  } else {
+    l=abs(bb(uv,vec2(0.2,0.6))-0.15); // round o
+    if (oldx<1.0) {
+      // g - ugh nasty
+      if (uv.x>0.0 && uv.y>0.0 && uv.y<0.5)
+        l=bb((uv)-vec2(0.35,0.6),vec2(0.0,0.1));
+      float e0=bb(uv-vec2(0.2,0.0),vec2(0.15,0.0));
+      l=min(l,e0);
+    }
+  }
+  return smoothstep(0.2,0.05,l);
+}
+
+float nsdf(vec3 p)
+{
+//  return sdf(p);
+
+  //for normals, add small bump displacements
+  float d = sdf(p);
+
+  float stripe = mod(p.y,2.);
+  d -= smoothstep(0.,0.04,abs(stripe-1.)*0.5)*0.01;
+
+#ifdef LOGO
+  d -= lego(10.*(fract(p.xz*vec2(0.5/brick_w)+0.5)-0.5))*.05;
+#endif
+
+  return d;
+}
+
+vec3 ss_nor(vec3 X)
+{
+  return normalize(cross(dFdx(X),dFdy(X)));
+}
+
+vec3 nor(vec3 X)
+{
+#ifdef NICE_NORMALS
+  //expensive... kills windows shader compilers
+  vec2 e = vec2(0.01,0.0); //fatter filter looks like bevelled edges on hard CSG shapes
+  vec3 N = vec3(nsdf(X-e.xyy),nsdf(X-e.yxy),nsdf(X-e.yyx)) -
+       vec3(nsdf(X+e.xyy),nsdf(X+e.yxy),nsdf(X+e.yyx));
+  return -normalize(N);
+#endif
+
+#ifdef MEDIUM_NORMALS
+  //less expensive
+  float e = 0.01;
+  float d = nsdf(X);
+  vec3 D;
+  D.x = nsdf(vec3(X.x+e,X.y,X.z));
+  D.y = nsdf(vec3(X.x,X.y+e,X.z));
+  D.z = nsdf(vec3(X.x,X.y,X.z+e));
+  return normalize(D-vec3(d));
+#endif
+
+#ifdef NASTY_NORMALS
+  return -ss_nor(X); //cheap and nasty
+#endif
+}
+
+
+//thanks again iq http://www.iquilezles.org/www/articles/rmshadows/rmshadows.htm
+float shadow( in vec3 X, in vec3 n, in vec3 L )
+{
+  float mint = 0.001;
+  float maxt = 20.0;
+
+  X += n*.01;
+
+  float h=0.4;
+  float sharpness = 25.;
+  float soft=1.0;
+  float t = mint;
+  for (int i=0; i<32; i++)
+    {
+        float d = sdf(X + L*t);
+        if( d<-0.1 )
+            return h; //t*h;
+
+    soft = min( soft, (sharpness*d)*(1./t));
+
+    if (t > maxt) break;
+        t += d * 0.9;
+    }
+    return clamp(soft,h,1.0);
+}
+
+float Ao(vec3 p, vec3 n) {
+  float vis = 0.0;
+  p += n*0.035;
+  float t = 0.;//0.035;
+  for (int i=0; i<9; i++)
+  {
+    float d = sdf(p);
+
+  //  h^2 = d^2+L^2
+    float h = inversesqrt( d*d + t*t );
+    vis += abs(d) * h;  //cos angle of clear area?
+
+    p += n * d * 0.9;
+    t += d * 0.9;
+  }
+  vis *= 0.1;
+  vis = bias(vis,0.125)*4.;
+  return vis;
+}
+
+float Trace(vec3 viewP, vec3 viewD, float max_t)
+{
+  float t = 0.;
+  float d;
+
+  float floor_intersect_t = (-viewP.y + floor_height) / (viewD.y);
+
+  vec3 neighViewD = dFdy(viewD)+viewD;
+
+  for (int i=0; i<48; i++)
+  {
+    vec3 X = viewP + viewD * t;
+    d = sdf(X);
+
+
+    vec3 nX = viewP + neighViewD*t;
+    float r = length(X-nX);
+    if (abs(d) < r*(0.25)) break; //less sparkly crap on silhouette edges?
+
+//    if (abs(d) < 0.00001) break; //near enough surface for normals to look OK.
+
+#if 1
+    if (t>max_t) //too far - won't converge: just go to ground plane.
+    {
+      t = floor_intersect_t;
+      break;
+    }
+#endif
+    t += d*0.9; //bounding volumes make the distance a bit wrong so slow down
+  }
+
+  return t;
+}
+
+float TraceR(vec3 viewP, vec3 viewD, float max_t)
+{
+  float t = 0.;
+  float d;
+
+  float floor_intersect_t = (-viewP.y + floor_height) / (viewD.y);
+
+  vec3 neighViewD = dFdy(viewD)+viewD;
+
+  for (int i=0; i<32; i++)
+  {
+    vec3 X = viewP + viewD * t;
+    d = sdf(X);
+
+
+    vec3 nX = viewP + neighViewD*t;
+    float r = length(X-nX);
+    if (abs(d) < r*(0.25)) break; //less sparkly crap on silhouette edges?
+
+//    if (abs(d) < 0.001) break; //near enough surface for normals to look OK.
+
+#if 1
+    if (t>max_t) //too far - won't converge: just go to ground plane.
+    {
+      t = floor_intersect_t;
+      //t = viewD.y < 0. ? floor_intersect_t : max_t;
+      break;
+    }
+#endif
+    t += d*0.9; //bounding volumes make the distance a bit wrong so slow down
+  }
+
+  return t;
+}
+
+vec3 Light(vec3 X, vec3 n, vec3 V)
+{
+  vec3 lightDir = normalize(vec3(-3,8,-5));
+
+  vec3 c = vec3( max(dot(lightDir, n), 0.) );
+
+  // c = pow(textureCube(iChannel0,n).xyz,vec3(2.2));
+
+
+#ifdef SHADOWS
+  float sha = shadow(X,n,lightDir);
+  c *= sha;
+#endif
+
+  c += 0.3;
+
+#ifdef AO
+  float ao = Ao(X, normalize(n) );
+//  return vec3(ao);
+  c *= ao;
+#endif
+
+#ifdef COLORS
+  vec2 aX = abs(X.xz+vec2(1.*brick_w,23.*brick_w));
+  float mX = max(aX.x,aX.y);
+
+  const float mat_test = 0.08;
+  if (AddStuds(BrickSDFY(X),X) < mat_test)
+    c *= pow(vec3(245./255.,205./255.,47./255.),vec3(2.2));  //yellow
+  else if (AddStuds(RedBrickSDFY(X),X) < mat_test)
+    c *= pow(vec3(196./255.,40./255.,27./255.),vec3(2.2)); //red
+  else if (mX < 30.*brick_w)
+    c *= pow(vec3(161./255.,165./255.,162./255.),vec3(2.2)); //gray
+  else if (mX < 44.*brick_w)
+    c *= pow(vec3(13./255.,105./255.,171./255.),vec3(2.2));  //blue
+  else
+    c *= pow(vec3(40./255.,127./255.,70./255.),vec3(2.2));  //green
+#endif
+
+  //vec3 h = normalize(V+lightDir);
+  //c += ao * sha *pow(max(dot(n,h),0.),80.0); //*2.5;
+
+  return c;
+}
+
+vec4 child_main(vec3 viewP, vec3 viewD)
+{
+  viewP *= 30.0;
+
+  float t = Trace(viewP,viewD, 200.);
+
+  vec3 X = viewP + viewD * t;
+  vec3 n = nor(X);
+
+  vec3 c = Light(X,n, viewD)*.7;
+
+#ifdef REFLECTIONS
+  vec3 R = reflect(viewD,n);
+  R = normalize(R);
+  t = TraceR(X,R, 200.);
+
+  X = X + R * t;
+  n = nor(X);
+//  n = ss_nor(X);
+
+  c += Light(X,n, R)*clamp(1.-t*0.0125,0.,1.)*.1;
+#endif
+
+//  c += Light(X,n);
+
+//  c = vec3(glo);
+
+  float gamma = 2.2;
+  c = pow(c, vec3(1./gamma));
+
+#if 0
+//  float debug_height = sin(iGlobalTime)*10.0;
+  float debug_height = sin(iGlobalTime);
+  float debug_intersect_t = (-viewP.y + debug_height) / (viewD.y);
+  if (debug_intersect_t < t)
+  {
+    vec3 X = viewP + viewD * debug_intersect_t;
+    float d = sdf(X);
+    c = vec3(max(d,0.),max(-d,0.),0.);
+  }
+#endif
+
+//  c = n*0.5+0.5;
+//  c = vec3(sha);
+//  c = vec3(ao);
+  return vec4(c,1.0);
+}
+</script>
+
+<script id="minecraft" type="bogus">
+// From: https://www.shadertoy.com/view/4ds3WS
+// Created by Reinder Nijhoff 2013
+//
+// port of javascript minecraft: http://jsfiddle.net/uzMPU/
+// original code by Markus Persson: https://twitter.com/notch/status/275331530040160256
+// combined with voxel-shader by inigo quilez (https://www.shadertoy.com/view/4dfGzs)
+//
+// All credits goes to inigo quilez!
+//
+
+#define SEALEVEL -25.
+#define MAXSTEPS 180
+//#define HOUSE
+
+vec3 sundir = normalize( vec3(-0.5,0.6,0.7) );
+
+float hash( in float n ) {
+    return fract(sin(n)*43758.5453);
+}
+float hash( in vec3 x ) {
+  float n = dot( x, vec3(1.0,113.0,257.0) );
+    return fract(sin(n)*43758.5453);
+}
+vec3 hash3( vec3 n ) {
+  return fract(sin(n)*vec3(653.5453123,4456.14123,165.340423));
+}
+// float noise( in vec3 x ) {
+//     vec3 p = floor(x);
+//     vec3 f = fract(x);
+//   f = f*f*(3.0-2.0*f);
+
+//   vec2 uv = (p.xy+vec2(37.0,17.0)*p.z) + f.xy;
+//   vec2 rg = texture2D( iChannel0, (uv+ 0.5)/256.0, -100.0 ).yx;
+//   return mix( rg.x, rg.y, f.z );
+// }
+// float noise( in vec2 x ) {
+//     vec2 p = floor(x);
+//     vec2 f = fract(x);
+//   vec2 uv = p.xy + f.xy*f.xy*(3.0-2.0*f.xy);
+//   return texture2D( iChannel0, (uv+118.4)/256.0, -100.0 ).x;
+// }
+float sum(vec3 v) { return dot(v, vec3(1.0)); }
+
+// port of minecraft
+
+bool getMaterialColor( int i, vec2 coord, out vec3 color ) {
+  // 16x16 tex
+  vec2 uv = floor( coord );
+
+    float n = uv.x + uv.y*347.0 + 4321.0 * float(i);
+  float h = hash(n);
+
+    float br = 1. - h * (96./255.);
+  color = vec3( 150./255., 108./255.,  74./255.); // 0x966C4A;
+
+  float xm1 = mod((uv.x * uv.x * 3. + uv.x * 81.) / 4., 4.);
+
+  if (i == 1) {
+    if( uv.y < (xm1 + 18.)) {
+      color = vec3( 106./255., 170./255.,  64./255.); // 0x6AAA40;
+    } else if (uv.y < (xm1 + 19.)) {
+      br = br * (2. / 3.);
+    }
+  }
+  if (i == 4) {
+    color = vec3( 127./255., 127./255., 127./255.); // 0x7F7F7F;
+  }
+  if (i == 7) {
+    color = vec3( 103./255., 82./255.,  49./255.); // 0x675231;
+    if ( h < 0.5 ) {
+      br = br * (1.5 - mod(uv.x, 2.));
+    }
+  }
+#ifdef HOUSE
+  if (i == 5) {
+    color = vec3( 181./255.,  58./255.,  21./255.); // 0xB53A15;
+    if ( mod(uv.x + (floor(uv.y / 4.) * 5.), 8.) == 0. || mod( uv.y, 4.) == 0.) {
+      color = vec3( 188./255., 175./255., 165./255.); // 0xBCAFA5;
+    }
+  }
+#endif
+  if (i == 9) {
+    color = vec3(  64./255.,  64./255., 255./255.); // 0x4040ff;
+  }
+  if (i == 8) {
+    color = vec3(  80./255., 217./255.,  55./255.); // 0x50D937;
+    if ( h < 0.5) {
+      return false;
+    }
+  }
+  if (i == 10) {
+    color = vec3(0.65,0.68,0.7)*1.35;
+    br = 1.;
+  }
+  color *= br;
+
+  return true;
+}
+
+//=====================================================================
+// Code by inigo quilez - iq/2013:
+
+const mat3 m = mat3( 0.00,  0.80,  0.60,
+                    -0.80,  0.36, -0.48,
+                    -0.60, -0.48,  0.64 );
+
+float mapTerrain( vec2 p ) {
+  p *= 0.02;
+
+  float f = 0.1 +
+    sin(p.x) * cos(p.y) * 0.3 +
+    sin(p.x * 5.0 + p.y * 3.0) * 0.1 +
+    sin(p.x * 8.0 - p.y * 11.0) * 0.05;
+    // f  = 0.500*texture2D( iChannel1, p*0.01 ).x;
+//    f += 0.1250*noise( p*4.01 );
+  return  max( 50.0*f-30., SEALEVEL);
+}
+
+vec3 gro = vec3(0.0);
+
+bool map(in vec3 c ) {
+  vec3 p = c + 0.5;
+
+  float f = mapTerrain( p.xz );
+
+  vec2 fc = floor( c.xz * 0.05 );
+  vec3 h = hash3( vec3( fc*vec2(213.123,2134.125), mapTerrain(fc) ) );
+  bool hit = false;
+
+  if( h.z > 0.75 ) {
+    vec2 tp = floor(fc*20.+mod(h.yx*154.43125, 10.)) + 5.5;
+    float h = mapTerrain( tp );
+    if( h > SEALEVEL ) {
+      if( all( equal( tp, p.xz ) ) ) hit = c.y < h+4.; // treetrunk
+      if( distance( p, vec3( tp.x, h+6., tp.y ) ) < 2.5 ) hit = true; // leaves
+    }
+  }
+
+  hit = c.y < f ? true:hit; // ground
+
+  // if( c.y > 8. &&
+  //    sin( (c.y-8.)*(3.1415/32.)) * (10./(c.y-7.)) * noise( c*0.08+(0.7*iGlobalTime)*vec3(0.3, 0.07, 0.12) )
+  //    > 0.6 ) hit = true; // clouds
+
+#ifdef HOUSE
+  vec2 hc = abs(c.xz - vec2( 32., 130.)); // house
+  if( all( lessThan( hc, vec2( 6., 10. ) ) ) && c.y < -hc.x-12. ) {
+    hit = true;
+    if( all( lessThan( hc, vec2( 2., 10. ) ) ) && c.y < -18. && c.y > -23. ) {
+      hit = false;
+    }
+    if( all( lessThan( hc, vec2( 5., 9. ) ) ) && c.y < -18. && c.y > -23. ) {
+      hit = false;
+    }
+  }
+#endif
+
+  if( distance( gro, c ) < 1.5 ) return false;
+
+  return hit;
+}
+
+
+int mapMaterial(in vec3 c ) {
+  int mat = 0;
+  vec3 p = c + 0.5;
+
+  float f = ceil( mapTerrain( p.xz ) );
+
+  if( p.y <= f ) mat = 1; // ground
+  else if( p.y < f+3. ) mat = 7; // treetrunk
+  else if( p.y < f+10. ) mat = 8; // leaves
+  else mat = 10; // clouds
+
+#ifdef HOUSE
+  vec2 hc = abs(c.xz - vec2( 32., 130.));
+  if( c.y < 0. && all( lessThan( hc, vec2( 6., 10. ) ) ) ) {
+    mat = 5;
+    if( !map( c+vec3(0.,1.,0.) ) ) mat = 6;
+  }
+#endif
+
+  return mat;
+}
+
+float castRay( in vec3 ro, in vec3 rd, out vec3 oVos, out vec3 oDir ) {
+  vec3 pos = floor(ro);
+  vec3 ri = 1.0/rd;
+  vec3 rs = sign(rd);
+  vec3 dis = (pos-ro + 0.5 + rs*0.5) * ri;
+
+  float res = 0.0;
+  vec3 mm = vec3(0.0);
+  bool hit = false;
+
+  for( int i=0; i<MAXSTEPS; i++ )
+  {
+    if( hit ) continue;
+    mm = step(dis.xyz, dis.yxy) * step(dis.xyz, dis.zzx);
+    dis += mm * rs * ri;
+        pos += mm * rs;
+    if( map(pos) ) { hit = true;}
+  }
+
+  vec3 nor = -mm*rs;
+  vec3 vos = pos;
+
+    // intersect the cube
+  vec3 mini = (pos-ro + 0.5 - 0.5*vec3(rs))*ri;
+  float t = max ( mini.x, max ( mini.y, mini.z ) );
+
+  oDir = mm;
+  oVos = vos;
+
+  return hit?t:0.;
+
+}
+
+float castVRay( in vec3 ro, in vec3 rd, in float maxDist ) {
+
+  vec3 pos = floor(ro);
+  vec3 ri = 1.0/rd;
+  vec3 rs = sign(rd);
+  vec3 dis = (pos-ro + 0.5 + rs*0.5) * ri;
+
+  float res = 1.0;
+
+  for( int i=0; i<18; i++ )
+  {
+    if( map(pos) ) {res=0.0; continue; }
+    vec3 mm = step(dis.xyz, dis.yxy) * step(dis.xyz, dis.zzx);
+    dis += mm * rs * ri;
+        pos += mm * rs;
+  }
+
+  return res;
+
+}
+
+// vec3 path( float t ) {
+//     vec2 p  = 100.0*sin( 0.02*t*vec2(1.0,1.2) + vec2(0.1,0.9) );
+//        p +=  50.0*sin( 0.04*t*vec2(1.3,1.0) + vec2(1.0,4.5) );
+
+//   return vec3( p.x, mapTerrain(p)+2.+4.*(1.-cos(iGlobalTime*0.1)), p.y );
+// }
+
+
+//=====================================================================
+// Ambient occlusion
+
+vec4 edges( in vec3 vos, in vec3 nor, in vec3 dir )
+{
+  vec3 v1 = vos + nor + dir.yzx;
+  vec3 v2 = vos + nor - dir.yzx;
+  vec3 v3 = vos + nor + dir.zxy;
+  vec3 v4 = vos + nor - dir.zxy;
+
+  vec4 res = vec4(0.0);
+  if( map(v1) ) res.x = 1.0;
+  if( map(v2) ) res.y = 1.0;
+  if( map(v3) ) res.z = 1.0;
+  if( map(v4) ) res.w = 1.0;
+
+  return res;
+}
+
+vec4 corners( in vec3 vos, in vec3 nor, in vec3 dir )
+{
+  vec3 v1 = vos + nor + dir.yzx + dir.zxy;
+  vec3 v2 = vos + nor - dir.yzx + dir.zxy;
+  vec3 v3 = vos + nor - dir.yzx - dir.zxy;
+  vec3 v4 = vos + nor + dir.yzx - dir.zxy;
+
+  vec4 res = vec4(0.0);
+  if( map(v1) ) res.x = 1.0;
+  if( map(v2) ) res.y = 1.0;
+  if( map(v3) ) res.z = 1.0;
+  if( map(v4) ) res.w = 1.0;
+
+  return res;
+}
+
+
+vec4 child_main(vec3 ro, vec3 rd) {
+  ro *= 30.0;
+  gro = ro;
+
+  float sun = clamp( dot(sundir,rd), 0.0, 1.0 );
+  vec3 col = vec3(0.6,0.71,0.75) - rd.y*0.2*vec3(1.0,0.5,1.0) + 0.15*0.5;
+  col += 0.2*vec3(1.0,.6,0.1)*pow( sun, 8.0 );
+  col *= 0.95;
+
+  vec3 vos, dir;
+  float t = castRay( ro, rd, vos, dir );
+
+  if( t>0.0 ) {
+    vec3 nor = -dir*sign(rd);
+
+    vec3 pos = ro + rd*t;
+    int mMat = mapMaterial( vos );
+    vec3 mpos = mod( pos * 16., 16. );
+
+    if( mMat == 1 ) {
+      if( map( vos + vec3(0., 1., 0. ) ) ) {
+        mMat = hash(vos) > 0.5?2:4;
+        if( map( vos + vec3(0., 2., 0. ) ) ) mMat = 4;
+      }
+      if ( vos.y < SEALEVEL ) mMat = 9;
+    }
+
+    vec3 mCol;
+    getMaterialColor( mMat, nor.y!=0.?mpos.xz:nor.x!=0.?-mpos.zy+vec2(32.,32.):-mpos.xy+vec2(32.,32.),mCol );
+
+    // lighting
+    float dif = clamp( dot( nor, sundir ), 0.0, 1.0 );
+    float sha = 0.0; if( dif>0.01) sha=castVRay(pos+nor*0.01,sundir,32.0);
+    float bac = clamp( dot( nor, normalize(sundir*vec3(-1.0,0.0,-1.0)) ), 0.0, 1.0 );
+    float sky = 0.5 + 0.5*nor.y;
+    float amb = 1.0;//clamp(0.75 + pos.y/100.0,0.0,1.0);
+
+        // ambient occlusion
+
+        vec4 ed = edges( vos, nor, dir );
+        vec4 co = corners( vos, nor, dir );
+        vec3 uvw = pos - vos;
+        vec2 uv = vec2( dot(dir.yzx, uvw), dot(dir.zxy, uvw) );
+
+        float occ = 0.0;
+        // (for edges)
+        occ += (    uv.x) * ed.x;
+        occ += (1.0-uv.x) * ed.y;
+        occ += (    uv.y) * ed.z;
+        occ += (1.0-uv.y) * ed.w;
+        // (for corners)
+        occ += (      uv.y *     uv.x ) * co.x*(1.0-ed.x)*(1.0-ed.z);
+        occ += (      uv.y *(1.0-uv.x)) * co.y*(1.0-ed.z)*(1.0-ed.y);
+        occ += ( (1.0-uv.y)*(1.0-uv.x)) * co.z*(1.0-ed.y)*(1.0-ed.w);
+        occ += ( (1.0-uv.y)*     uv.x ) * co.w*(1.0-ed.w)*(1.0-ed.x);
+        occ = 1.0 - occ/8.0;
+        occ = occ*occ;
+        occ = occ*occ;
+
+
+    vec3 lin = vec3(0.0);
+    lin += 4.0*dif*vec3(1.)*(0.5+0.5*occ)*(0.25+0.75*sha);
+    lin += 1.8*bac*vec3(1.0,0.5,1.0)*(0.5+0.5*occ);
+    lin += 4.0*sky*vec3(0.6,0.71,0.75)*occ;
+
+
+    if( mMat == 10 ) {
+      col = mix( col, mCol*lin*0.6, 0.3);
+    } else {
+      // atmospheric
+      col = mix( mCol*lin*0.2, col, 1.0-exp(-0.0000001*t*t*t) );
+    }
+  }
+
+  col += 0.2*vec3(1.0,0.4,0.2)*pow( sun, 3.0 );
+
+    // gamma
+  col = pow( col, vec3(0.45) );
+
+  // contrast
+    col = col* 0.25 + 0.75*col*col*(3.0-2.0*col);
+
+    col = clamp( col, 0.0, 1.0 );
+
+  // // vignetting
+  // col *= 0.5 + 0.5*pow( 16.0*q.x*q.y*(1.0-q.x)*(1.0-q.y), 0.1 );
+
+  return vec4( col, 1.0 );
+}
+</script>
+
+<body style="position:fixed;left:0;top:0;right:0;bottom:0;overflow;hidden;margin:0;">
+<canvas id="canvas"></canvas>
+</body>
+<script>
+
+var gl = canvas.getContext('experimental-webgl', { 'alpha': false });
+var buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+gl.getExtension('OES_standard_derivatives');
+
+function createShader(vertexSource, fragmentSource) {
+  function compileShader(type, source) {
+    var shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    var info = gl.getShaderInfoLog(shader);
+    if (info) throw new Error(info);
+    gl.attachShader(program, shader);
+  }
+  var program = gl.createProgram();
+  compileShader(gl.VERTEX_SHADER, vertexSource);
+  compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+  gl.linkProgram(program);
+  return program;
+}
+
+function render() {
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.useProgram(shader);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  gl.uniform3f(gl.getUniformLocation(shader, 'eye'), eye.x, eye.y, eye.z);
+  gl.uniform3f(gl.getUniformLocation(shader, 'axisX'), axisX.x, axisX.y, axisX.z);
+  gl.uniform3f(gl.getUniformLocation(shader, 'axisY'), axisY.x, axisY.y, axisY.z);
+  gl.uniform3f(gl.getUniformLocation(shader, 'axisZ'), axisZ.x, axisZ.y, axisZ.z);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function tick() {
+  var left = keys[37] | keys[65];
+  var up = keys[38] | keys[87];
+  var right = keys[39] | keys[68];
+  var down = keys[40] | keys[83];
+  var nextTime = performance.now();
+  var seconds = (nextTime - previousTime) / 1000;
+  previousTime = nextTime;
+
+  if (needsRender || left !== right || up !== down) {
+    needsRender = false;
+
+    var sinX = Math.sin(angleX);
+    var cosX = Math.cos(angleX);
+    var sinY = Math.sin(angleY);
+    var cosY = Math.cos(angleY);
+    axisX = { x: cosY, y: 0, z: -sinY };
+    axisY = { x: sinY * sinX, y: cosX, z: cosY * sinX };
+    axisZ = { x: sinY * cosX, y: -sinX, z: cosY * cosX };
+
+    var deltaX = (right - left) * seconds;
+    var deltaZ = (up - down) * seconds;
+    eye.x += axisX.x * deltaX + axisZ.x * deltaZ;
+    eye.y += axisX.y * deltaX + axisZ.y * deltaZ;
+    eye.z += axisX.z * deltaX + axisZ.z * deltaZ;
+
+    render();
+  }
+
+  requestAnimationFrame(tick);
+}
+
+function resize() {
+  gl.canvas.width = Math.min(1280, innerWidth);
+  gl.canvas.height = Math.min(800, innerHeight);
+  gl.canvas.style.width = innerWidth + 'px';
+  gl.canvas.style.height = innerHeight + 'px';
+  render();
+}
+
+function loadShader(element) {
+  eye = { x: 0, y: 1, z: -5 };
+  axisX = { x: 1, y: 0, z: 0 };
+  axisY = { x: 0, y: 1, z: 0 };
+  axisZ = { x: 0, y: 0, z: 1 };
+  angleX = 0;
+  angleY = 0;
+  shader = createShader(vertexShader.textContent, fragmentShader.textContent + element.textContent);
+  needsRender = true;
+}
+
+if (!window.performance) window.performance = {};
+if (!window.performance.now) performance.now = function() { return +new Date; };
+if (!window.requestAnimationFrame) window.requestAnimationFrame = function(callback) { setTimeout(callback, 0); };
+
+document.onmousedown = function(e) {
+  e.preventDefault();
+  var oldX = e.pageX;
+  var oldY = e.pageY;
+
+  document.onmousemove = function(e) {
+    angleX += (e.pageY - oldY) * 0.003;
+    angleY += (e.pageX - oldX) * 0.003;
+    angleX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, angleX));
+    oldX = e.pageX;
+    oldY = e.pageY;
+    needsRender = true;
+  };
+
+  document.onmouseup = function(e) {
+    document.onmousemove = document.onmouseup = null;
+  };
+};
+
+var keys = {};
+document.onkeydown = function(e) {
+  keys[e.which] = true;
+
+  switch (e.which - 48) {
+    case 1: loadShader(truchetTentacles); break;
+    case 2: loadShader(mandelbulb); break;
+    case 3: loadShader(legoCastle); break;
+    case 4: loadShader(minecraft); break;
+  }
+};
+document.onkeyup = function(e) { keys[e.which] = false; };
+window.onblur = function() { keys = {}; };
+
+var needsRender = true;
+var previousTime = performance.now();
+var eye = { x: 0, y: 0, z: 0 };
+var axisX = { x: 0, y: 0, z: 0 };
+var axisY = { x: 0, y: 0, z: 0 };
+var axisZ = { x: 0, y: 0, z: 0 };
+var angleX = 0;
+var angleY = 0;
+var shader = null;
+window.onresize = resize;
+loadShader(truchetTentacles);
+resize();
+tick();
+
+</script>
