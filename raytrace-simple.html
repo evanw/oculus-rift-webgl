@@ -91,7 +91,7 @@ void main() {
   vec2 tc = LensCenter + theta1 * Scale;
 
   // Trace the warped ray
-  vec3 localEye = eye + axisX * HMD_InterpupillaryDistance * 0.5 * (isRight ? 1.0 : -1.0);
+  vec3 localEye = eye + axisX * HMD_InterpupillaryDistance * 3.0 * (isRight ? 1.0 : -1.0);
   gl_FragColor = sample(tc, localEye, LensCenter);
 }
 </script>

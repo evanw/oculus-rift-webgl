@@ -51,8 +51,9 @@ vec4 child_main(vec3 eye, vec3 ray);
 // side-by-side that have been rendered using normal perspective projection.
 // The left eye takes up [0,0]x[0.5,1] and the right eye takes up [0.5,0]x[1,1].
 vec4 sample(vec2 point, vec3 eye, vec2 LensCenter) {
-  float dx = (point.x - LensCenter.x) * 2.0;
-  float dy = point.y - LensCenter.y;
+  float scale = 2.0;
+  float dx = (point.x - LensCenter.x) * 2.0 * scale;
+  float dy = (point.y - LensCenter.y) * scale;
   vec3 ray = axisX * dx + axisY * dy + axisZ;
   return child_main(eye, ray);
 }
